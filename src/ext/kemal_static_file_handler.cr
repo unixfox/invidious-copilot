@@ -164,7 +164,7 @@ module Kemal
         if is_dir
           if config.is_a?(Hash) && config["dir_listing"] == true
             context.response.content_type = "text/html"
-            directory_listing(context.response, request_path, file_path)
+            directory_listing(context.response, Path.new(request_path), Path.new(file_path))
           else
             call_next(context)
           end

@@ -196,6 +196,17 @@ def fetch_channel(ucid, pull_all_videos : Bool)
 
   LOGGER.trace("fetch_channel: #{ucid} : Downloading channel videos page")
   videos, continuation = IV::Channel::Tabs.get_videos(channel)
+  
+  # Also fetch shorts to ensure duration information is available for shorts in RSS feed
+  LOGGER.trace("fetch_channel: #{ucid} : Downloading channel shorts")
+  begin
+    shorts, _ = IV::Channel::Tabs.get_shorts(channel)
+    # Combine videos and shorts for RSS matching
+    videos = videos.concat(shorts)
+  rescue ex
+    LOGGER.debug("fetch_channel: #{ucid} : Failed to fetch shorts: #{ex.message}")
+    # Continue without shorts if fetching fails
+  end
 
   LOGGER.trace("fetch_channel: #{ucid} : Extracting videos from channel RSS feed")
   rss.xpath_nodes("//default:feed/default:entry", namespaces).each do |entry|
