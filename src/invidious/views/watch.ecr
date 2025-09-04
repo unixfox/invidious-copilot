@@ -246,8 +246,6 @@ we're going to need to do it here in order to allow for translations.
             <p id="published-date">
                 <% if video.premiere_timestamp.try &.> Time.utc %>
                     <b><%= video.premiere_timestamp.try { |t| translate(locale, "Premieres `x`", t.to_s("%B %-d, %R UTC")) } %></b>
-                <% elsif video.published <= Time.unix(0) %>
-                    <b><%= translate(locale, "Date unknown") %></b>
                 <% else %>
                     <b><%= translate(locale, "Shared `x`", video.published.to_s("%B %-d, %Y")) %></b>
                 <% end %>

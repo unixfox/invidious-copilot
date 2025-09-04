@@ -172,6 +172,10 @@ def parse_video_info(video_id : String, player_response : Hash(String, JSON::Any
 
   raise BrokenTubeException.new("twoColumnWatchNextResults") if !main_results
 
+  # Initialize renderers (may be nil for Music videos)
+  video_primary_renderer : JSON::Any? = nil
+  video_secondary_renderer : JSON::Any? = nil
+
   # Primary results are not available on Music videos
   # See: https://github.com/iv-org/invidious/pull/3238#issuecomment-1207193725
   if primary_results = main_results.dig?("results", "results", "contents")
@@ -212,7 +216,22 @@ def parse_video_info(video_id : String, player_response : Hash(String, JSON::Any
     .try &.as_s.to_i64
 
   published = microformat["publishDate"]?
-    .try { |t| Time.parse(t.as_s, "%Y-%m-%d", Time::Location::UTC) } || Time.unix(0)
+    .try { |t| Time.parse(t.as_s, "%Y-%m-%d", Time::Location::UTC) }
+  
+  # Try to get publish date from video primary renderer if microformat doesn't have it
+  if published.nil? && video_primary_renderer
+    published = video_primary_renderer.dig?("publishedTimeText", "simpleText")
+      .try { |t| decode_date(t.as_s) }
+  end
+  
+  # Try to get publish date from video secondary renderer as fallback
+  if published.nil? && video_secondary_renderer
+    published = video_secondary_renderer.dig?("publishedTimeText", "simpleText")
+      .try { |t| decode_date(t.as_s) }
+  end
+  
+  # Fall back to Unix epoch if no publish date found
+  published ||= Time.unix(0)
 
   premiere_timestamp = microformat.dig?("liveBroadcastDetails", "startTimestamp")
     .try { |t| Time.parse_rfc3339(t.as_s) }
