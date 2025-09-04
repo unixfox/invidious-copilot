@@ -2,15 +2,37 @@ module Invidious::Routes::API::V1::Search
   def self.search(env)
     locale = env.get("preferences").as(Preferences).locale
     region = env.params.query["region"]?
+    extend_desc = env.params.query["extend_desc"]? == "true"
 
     env.response.content_type = "application/json"
 
     query = Invidious::Search::Query.new(env.params.query, :regular, region)
 
     begin
-      search_results = query.process
+      search_results = query.process.as(Array(SearchItem))
     rescue ex
       return error_json(400, ex)
+    end
+
+    # If extend_desc is requested, fetch full descriptions for video results
+    if extend_desc
+      # Collect all video IDs that need description fetching
+      video_ids = search_results.compact_map do |item|
+        item.is_a?(SearchVideo) ? item.id : nil
+      end
+      
+      # Log the performance impact
+      LOGGER.info("extend_desc requested: fetching descriptions for #{video_ids.size} videos")
+      
+      # For better performance, we could implement batch fetching here in the future
+      # For now, fetch descriptions individually with error handling
+      search_results = search_results.map do |item|
+        if item.is_a?(SearchVideo)
+          extend_video_description(item, locale)
+        else
+          item
+        end
+      end
     end
 
     JSON.build do |json|
@@ -82,6 +104,41 @@ module Invidious::Routes::API::V1::Search
           end
         end
       end
+    end
+  end
+
+  # Helper method to fetch full description for a video from the video details API
+  # This is needed because search results (compactVideoRenderer) don't include descriptions
+  private def self.extend_video_description(video : SearchVideo, locale : String?) : SearchVideo
+    begin
+      # Performance note: This makes an additional API call per video
+      # Consider implementing batch fetching or caching for production use
+      video_details = get_video(video.id, region: nil)
+      
+      # Only create new SearchVideo if we actually got a description
+      if description_html = video_details.description_html
+        return SearchVideo.new({
+          title:              video.title,
+          id:                 video.id,
+          author:             video.author,
+          ucid:               video.ucid,
+          published:          video.published,
+          views:              video.views,
+          description_html:   description_html,
+          length_seconds:     video.length_seconds,
+          premiere_timestamp: video.premiere_timestamp,
+          author_verified:    video.author_verified,
+          author_thumbnail:   video.author_thumbnail,
+          badges:             video.badges,
+        })
+      end
+      
+      # Return original video if no description was found
+      return video
+    rescue ex
+      LOGGER.debug("Failed to fetch description for video #{video.id}: #{ex.message}")
+      # Return original video if fetching fails - don't break the search
+      return video
     end
   end
 end

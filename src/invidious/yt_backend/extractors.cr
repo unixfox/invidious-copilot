@@ -13,6 +13,7 @@ private ITEM_CONTAINER_EXTRACTOR = {
 private ITEM_PARSERS = {
   Parsers::RichItemRendererParser,
   Parsers::VideoRendererParser,
+  Parsers::CompactVideoRendererParser,
   Parsers::ChannelRendererParser,
   Parsers::GridPlaylistRendererParser,
   Parsers::PlaylistRendererParser,
@@ -140,6 +141,121 @@ private module Parsers
       end
 
       SearchVideo.new({
+        title:              title,
+        id:                 video_id,
+        author:             author,
+        ucid:               author_id,
+        published:          published,
+        views:              view_count,
+        description_html:   description_html,
+        length_seconds:     length_seconds,
+        premiere_timestamp: premiere_timestamp,
+        author_verified:    author_verified,
+        author_thumbnail:   author_thumbnail,
+        badges:             badges,
+      })
+    end
+
+    def self.parser_name
+      return {{@type.name}}
+    end
+  end
+
+  # Parses a InnerTube compactVideoRenderer into a SearchVideo. Returns nil when the given object isn't a compactVideoRenderer
+  #
+  # A compactVideoRenderer renders a video to click on within the YouTube and Invidious UI. It is **not**
+  # the watchable video itself. This is the modern format used in search results since ~2024.
+  #
+  # This renderer is similar to videoRenderer but with a different structure and typically 
+  # without description snippets, which is why the descriptions are empty in search results.
+  #
+  # `compactVideoRenderer`s are found in search results and related video sections.
+  #
+  module CompactVideoRendererParser
+    def self.process(item : JSON::Any, author_fallback : AuthorFallback)
+      if item_contents = item["compactVideoRenderer"]?
+        return self.parse(item_contents, author_fallback)
+      end
+    end
+
+    private def self.parse(item_contents, author_fallback)
+      video_id = item_contents["videoId"].as_s
+      title = extract_text(item_contents["title"]?) || ""
+
+      # Extract author information (similar to VideoRendererParser but adjusted for compactVideoRenderer structure)
+      if author_info = item_contents.dig?("longBylineText", "runs", 0)
+        author = author_info["text"].as_s
+        author_id = HelperExtractors.get_browse_id(author_info)
+      elsif author_info = item_contents.dig?("shortBylineText", "runs", 0)
+        author = author_info["text"].as_s
+        author_id = HelperExtractors.get_browse_id(author_info)
+      else
+        author = author_fallback.name
+        author_id = author_fallback.id
+      end
+
+      author_thumbnail = item_contents.dig?("channelThumbnail", "thumbnails", 0, "url").try &.as_s
+
+      author_verified = has_verified_badge?(item_contents["ownerBadges"]?)
+
+      # For compactVideoRenderer, published time might be in different location
+      published = item_contents.dig?("publishedTimeText", "simpleText").try { |t| decode_date(t.as_s) } || Time.local
+
+      # Views in compactVideoRenderer
+      view_count = item_contents.dig?("viewCountText", "simpleText").try &.as_s.gsub(/\D+/, "").to_i64? || 0_i64
+      
+      # Description is typically NOT present in compactVideoRenderer - this is the root cause of empty descriptions
+      description_html = item_contents["descriptionSnippet"]?.try { |t| parse_content(t, video_id) } || ""
+
+      # Length handling for compactVideoRenderer
+      if length_container = item_contents["lengthText"]?
+        length_seconds = decode_length_seconds(length_container["simpleText"].as_s)
+      elsif length_container = item_contents["thumbnailOverlays"]?.try &.as_a.find(&.["thumbnailOverlayTimeStatusRenderer"]?)
+        length_text = length_container.dig?("thumbnailOverlayTimeStatusRenderer", "text", "simpleText")
+        
+        if length_text
+          length_text = length_text.as_s
+          
+          if length_text == "SHORTS"
+            length_seconds = 60_i32
+          else
+            length_seconds = decode_length_seconds(length_text)
+          end
+        else
+          length_seconds = 0
+        end
+      else
+        length_seconds = 0
+      end
+
+      premiere_timestamp = item_contents.dig?("upcomingEventData", "startTime").try { |t| Time.unix(t.as_s.to_i64) }
+      badges = VideoBadges::None
+      item_contents["badges"]?.try &.as_a.each do |badge|
+        b = badge["metadataBadgeRenderer"]
+        case b["label"].as_s
+        when "LIVE"
+          badges |= VideoBadges::LiveNow
+        when "New"
+          badges |= VideoBadges::New
+        when "4K"
+          badges |= VideoBadges::FourK
+        when "8K"
+          badges |= VideoBadges::EightK
+        when "VR180"
+          badges |= VideoBadges::VR180
+        when "360°"
+          badges |= VideoBadges::VR360
+        when "3D"
+          badges |= VideoBadges::ThreeD
+        when "CC"
+          badges |= VideoBadges::ClosedCaptions
+        when "Premium"
+          badges |= VideoBadges::Premium
+        else nil # Ignore
+        end
+      end
+
+      return SearchVideo.new({
         title:              title,
         id:                 video_id,
         author:             author,
