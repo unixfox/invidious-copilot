@@ -212,7 +212,7 @@ def parse_video_info(video_id : String, player_response : Hash(String, JSON::Any
     .try &.as_s.to_i64
 
   published = microformat["publishDate"]?
-    .try { |t| Time.parse(t.as_s, "%Y-%m-%d", Time::Location::UTC) } || Time.utc
+    .try { |t| Time.parse(t.as_s, "%Y-%m-%d", Time::Location::UTC) } || Time.unix(0)
 
   premiere_timestamp = microformat.dig?("liveBroadcastDetails", "startTimestamp")
     .try { |t| Time.parse_rfc3339(t.as_s) }
@@ -413,7 +413,7 @@ def parse_video_info(video_id : String, player_response : Hash(String, JSON::Any
     video_type = VideoType::Livestream
   elsif !premiere_timestamp.nil?
     video_type = VideoType::Scheduled
-    published = premiere_timestamp || Time.utc
+    published = premiere_timestamp || Time.unix(0)
   else
     video_type = VideoType::Video
   end

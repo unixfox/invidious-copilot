@@ -65,7 +65,7 @@ struct Video
 
   def published : Time
     return info["published"]?
-      .try { |t| Time.parse(t.as_s, "%Y-%m-%d", Time::Location::UTC) } || Time.utc
+      .try { |t| Time.parse(t.as_s, "%Y-%m-%d", Time::Location::UTC) } || Time.unix(0)
   end
 
   def published=(other : Time)
