@@ -696,6 +696,12 @@ private module Parsers
         item_contents.dig("overlayMetadata", "secondaryText", "content").as_s
       )
 
+      # Extract published date - try various possible locations
+      published = item_contents.dig?("publishedTimeText", "simpleText").try { |t| decode_date(t.as_s) } ||
+                  item_contents.dig?("timestampText", "simpleText").try { |t| decode_date(t.as_s) } ||
+                  item_contents.dig?("overlayMetadata", "tertiaryText", "content").try { |t| decode_date(t.as_s) } ||
+                  Time.utc
+
       # Approximate to one minute, as "shorts" generally don't exceed that.
       # NOTE: The actual duration is not provided by Youtube anymore.
       # TODO: Maybe use -1 as an error value and handle that on the frontend?
@@ -706,7 +712,7 @@ private module Parsers
         id:                 video_id,
         author:             author_fallback.name,
         ucid:               author_fallback.id,
-        published:          Time.unix(0),
+        published:          published,
         views:              view_count,
         description_html:   "",
         length_seconds:     duration,
