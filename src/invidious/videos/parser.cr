@@ -368,11 +368,34 @@ def parse_video_info(video_id : String, player_response : Hash(String, JSON::Any
   
   # Fallback to newer structure with horizontalCardListRenderer if the original is not found
   if music_desclist.nil? || music_desclist.as_a?.try &.empty?
+    # Try multiple possible paths for the new structure
     music_desclist = player_response.dig?(
       "engagementPanels", 1, "engagementPanelSectionListRenderer",
       "content", "structuredDescriptionContentRenderer", "items", 2,
       "horizontalCardListRenderer", "cards"
     )
+    
+    # Try with "items" instead of "cards"
+    if music_desclist.nil? || music_desclist.as_a?.try &.empty?
+      music_desclist = player_response.dig?(
+        "engagementPanels", 1, "engagementPanelSectionListRenderer",
+        "content", "structuredDescriptionContentRenderer", "items", 2,
+        "horizontalCardListRenderer", "items"
+      )
+    end
+    
+    # Try direct access to horizontalCardListRenderer without cards/items container
+    if music_desclist.nil? || music_desclist.as_a?.try &.empty?
+      horizontalRenderer = player_response.dig?(
+        "engagementPanels", 1, "engagementPanelSectionListRenderer",
+        "content", "structuredDescriptionContentRenderer", "items", 2,
+        "horizontalCardListRenderer"
+      )
+      if horizontalRenderer && horizontalRenderer.as_h?
+        # If it's an object, wrap it in an array for consistent processing
+        music_desclist = JSON::Any.new([horizontalRenderer])
+      end
+    end
   end
 
   music_desclist.try &.as_a.each do |music_desc|
