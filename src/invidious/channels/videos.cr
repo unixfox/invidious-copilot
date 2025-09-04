@@ -32,6 +32,22 @@ module Invidious::Channel::Tabs
     return extract_items(initial_data, author, ucid)
   end
 
+  # Wrapper for InvidiousChannel, as we still need to call get_shorts with
+  # an author name and ucid directly (e.g in RSS feeds).
+  def get_shorts(channel : InvidiousChannel, *, continuation : String? = nil, sort_by = "newest")
+    return get_shorts_by_ucid(
+      channel.author, channel.id,
+      continuation: continuation, sort_by: sort_by
+    )
+  end
+
+  def get_shorts_by_ucid(author : String, ucid : String, *, continuation : String? = nil, sort_by = "newest")
+    continuation ||= make_initial_shorts_ctoken(ucid, sort_by)
+    initial_data = YoutubeAPI.browse(continuation: continuation)
+
+    return extract_items(initial_data, author, ucid)
+  end
+
   def get_60_videos(channel : AboutChannel, *, continuation : String? = nil, sort_by = "newest")
     if continuation.nil?
       # Fetch the first "page" of video
