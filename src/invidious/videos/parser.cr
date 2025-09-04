@@ -358,38 +358,79 @@ def parse_video_info(video_id : String, player_response : Hash(String, JSON::Any
   # Music section
 
   music_list = [] of VideoMusic
+  
+  # Try the original structure with videoDescriptionMusicSectionRenderer
   music_desclist = player_response.dig?(
     "engagementPanels", 1, "engagementPanelSectionListRenderer",
     "content", "structuredDescriptionContentRenderer", "items", 2,
     "videoDescriptionMusicSectionRenderer", "carouselLockups"
   )
+  
+  # Fallback to newer structure with horizontalCardListRenderer if the original is not found
+  if music_desclist.nil? || music_desclist.as_a?.try &.empty?
+    music_desclist = player_response.dig?(
+      "engagementPanels", 1, "engagementPanelSectionListRenderer",
+      "content", "structuredDescriptionContentRenderer", "items", 2,
+      "horizontalCardListRenderer", "cards"
+    )
+  end
 
   music_desclist.try &.as_a.each do |music_desc|
     artist = nil
     album = nil
     music_license = nil
+    song = nil
 
-    # Used when the video has multiple songs
-    if song_title = music_desc.dig?("carouselLockupRenderer", "videoLockup", "compactVideoRenderer", "title")
-      # "simpleText" for plain text / "runs" when song has a link
-      song = song_title["simpleText"]? || song_title.dig?("runs", 0, "text")
+    # Handle both carouselLockupRenderer (old) and potential new structures
+    if carousel_renderer = music_desc.dig?("carouselLockupRenderer")
+      # Original structure with carouselLockupRenderer
+      if song_title = carousel_renderer.dig?("videoLockup", "compactVideoRenderer", "title")
+        # "simpleText" for plain text / "runs" when song has a link
+        song = song_title["simpleText"]? || song_title.dig?("runs", 0, "text")
+      end
 
-      # some videos can have empty tracks. See: https://www.youtube.com/watch?v=eBGIQ7ZuuiU
-      next if !song
-    end
-
-    music_desc.dig?("carouselLockupRenderer", "infoRows").try &.as_a.each do |desc|
-      desc_title = extract_text(desc.dig?("infoRowRenderer", "title"))
-      if desc_title == "ARTIST"
-        artist = extract_text(desc.dig?("infoRowRenderer", "defaultMetadata"))
-      elsif desc_title == "SONG"
-        song = extract_text(desc.dig?("infoRowRenderer", "defaultMetadata"))
-      elsif desc_title == "ALBUM"
-        album = extract_text(desc.dig?("infoRowRenderer", "defaultMetadata"))
-      elsif desc_title == "LICENSES"
-        music_license = extract_text(desc.dig?("infoRowRenderer", "expandedMetadata"))
+      carousel_renderer.dig?("infoRows").try &.as_a.each do |desc|
+        desc_title = extract_text(desc.dig?("infoRowRenderer", "title"))
+        if desc_title == "ARTIST"
+          artist = extract_text(desc.dig?("infoRowRenderer", "defaultMetadata"))
+        elsif desc_title == "SONG"
+          song = extract_text(desc.dig?("infoRowRenderer", "defaultMetadata"))
+        elsif desc_title == "ALBUM"
+          album = extract_text(desc.dig?("infoRowRenderer", "defaultMetadata"))
+        elsif desc_title == "LICENSES"
+          music_license = extract_text(desc.dig?("infoRowRenderer", "expandedMetadata"))
+        end
+      end
+    else
+      # Try parsing horizontalCardListRenderer structure
+      # The structure might use different field names, so we try common patterns
+      
+      # Try to get song title from various possible locations
+      song_title = music_desc.dig?("title") || music_desc.dig?("header", "title")
+      if song_title
+        song = song_title["simpleText"]? || song_title.dig?("runs", 0, "text")
+      end
+      
+      # Try to find metadata in common locations for horizontal card structure
+      if metadata = music_desc.dig?("metadata") || music_desc.dig?("subtitle") || music_desc.dig?("infoRows")
+        metadata.try &.as_a.each do |desc|
+          desc_title = extract_text(desc.dig?("title")) || extract_text(desc.dig?("infoRowRenderer", "title"))
+          if desc_title == "ARTIST"
+            artist = extract_text(desc.dig?("defaultMetadata")) || extract_text(desc.dig?("infoRowRenderer", "defaultMetadata"))
+          elsif desc_title == "SONG"
+            song = extract_text(desc.dig?("defaultMetadata")) || extract_text(desc.dig?("infoRowRenderer", "defaultMetadata"))
+          elsif desc_title == "ALBUM"
+            album = extract_text(desc.dig?("defaultMetadata")) || extract_text(desc.dig?("infoRowRenderer", "defaultMetadata"))
+          elsif desc_title == "LICENSES"
+            music_license = extract_text(desc.dig?("expandedMetadata")) || extract_text(desc.dig?("infoRowRenderer", "expandedMetadata"))
+          end
+        end
       end
     end
+
+    # some videos can have empty tracks. See: https://www.youtube.com/watch?v=eBGIQ7ZuuiU
+    next if !song || song.to_s.empty?
+    
     music_list << VideoMusic.new(song.to_s, album.to_s, artist.to_s, music_license.to_s)
   end
 
