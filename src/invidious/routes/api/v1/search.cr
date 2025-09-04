@@ -9,7 +9,7 @@ module Invidious::Routes::API::V1::Search
     query = Invidious::Search::Query.new(env.params.query, :regular, region)
 
     begin
-      search_results = query.process
+      search_results = query.process.as(Array(SearchItem))
     rescue ex
       return error_json(400, ex)
     end
@@ -116,7 +116,7 @@ module Invidious::Routes::API::V1::Search
       video_details = get_video(video.id, region: nil)
       
       # Only create new SearchVideo if we actually got a description
-      if description_html = video_details.descriptionHtml
+      if description_html = video_details.description_html
         return SearchVideo.new({
           title:              video.title,
           id:                 video.id,
