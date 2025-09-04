@@ -359,42 +359,37 @@ def parse_video_info(video_id : String, player_response : Hash(String, JSON::Any
 
   music_list = [] of VideoMusic
   
-  # Try the original structure with videoDescriptionMusicSectionRenderer
-  music_desclist = player_response.dig?(
-    "engagementPanels", 1, "engagementPanelSectionListRenderer",
-    "content", "structuredDescriptionContentRenderer", "items", 2,
-    "videoDescriptionMusicSectionRenderer", "carouselLockups"
-  )
+  # Try to find music data by checking multiple engagement panels and structures
+  music_desclist = nil
   
-  # Fallback to newer structure with horizontalCardListRenderer if the original is not found
-  if music_desclist.nil? || music_desclist.as_a?.try &.empty?
-    # Try multiple possible paths for the new structure
-    music_desclist = player_response.dig?(
-      "engagementPanels", 1, "engagementPanelSectionListRenderer",
-      "content", "structuredDescriptionContentRenderer", "items", 2,
-      "horizontalCardListRenderer", "cards"
-    )
-    
-    # Try with "items" instead of "cards"
-    if music_desclist.nil? || music_desclist.as_a?.try &.empty?
-      music_desclist = player_response.dig?(
-        "engagementPanels", 1, "engagementPanelSectionListRenderer",
-        "content", "structuredDescriptionContentRenderer", "items", 2,
-        "horizontalCardListRenderer", "items"
-      )
-    end
-    
-    # Try direct access to horizontalCardListRenderer without cards/items container
-    if music_desclist.nil? || music_desclist.as_a?.try &.empty?
-      horizontalRenderer = player_response.dig?(
-        "engagementPanels", 1, "engagementPanelSectionListRenderer",
-        "content", "structuredDescriptionContentRenderer", "items", 2,
-        "horizontalCardListRenderer"
-      )
-      if horizontalRenderer && horizontalRenderer.as_h?
-        # If it's an object, wrap it in an array for consistent processing
-        music_desclist = JSON::Any.new([horizontalRenderer])
+  if engagement_panels = player_response.dig?("engagementPanels")
+    engagement_panels.as_a.each do |panel|
+      next unless panel_content = panel.dig?("engagementPanelSectionListRenderer", "content", "structuredDescriptionContentRenderer", "items")
+      
+      panel_content.as_a.each do |item|
+        # Try the original videoDescriptionMusicSectionRenderer first (backward compatibility)
+        if old_music = item.dig?("videoDescriptionMusicSectionRenderer", "carouselLockups")
+          music_desclist = old_music
+          break
+        # Try new horizontalCardListRenderer.cards structure
+        elsif horizontal_cards = item.dig?("horizontalCardListRenderer", "cards")
+          music_desclist = horizontal_cards
+          break
+        # Try horizontalCardListRenderer.items structure
+        elsif horizontal_items = item.dig?("horizontalCardListRenderer", "items")
+          music_desclist = horizontal_items
+          break
+        # Try direct horizontalCardListRenderer access
+        elsif horizontal_renderer = item.dig?("horizontalCardListRenderer")
+          if horizontal_renderer.as_h? && horizontal_renderer.as_h.size > 0
+            music_desclist = JSON::Any.new([horizontal_renderer])
+            break
+          end
+        end
       end
+      
+      # Break if we found music data
+      break if music_desclist && !music_desclist.as_a?.try &.empty?
     end
   end
 
@@ -425,27 +420,36 @@ def parse_video_info(video_id : String, player_response : Hash(String, JSON::Any
         end
       end
     else
-      # Try parsing horizontalCardListRenderer structure
-      # The structure might use different field names, so we try common patterns
+      # Try parsing horizontalCardListRenderer or new videoAttributeViewModel structure
       
-      # Try to get song title from various possible locations
-      song_title = music_desc.dig?("title") || music_desc.dig?("header", "title")
-      if song_title
-        song = song_title["simpleText"]? || song_title.dig?("runs", 0, "text")
-      end
-      
-      # Try to find metadata in common locations for horizontal card structure
-      if metadata = music_desc.dig?("metadata") || music_desc.dig?("subtitle") || music_desc.dig?("infoRows")
-        metadata.try &.as_a.each do |desc|
-          desc_title = extract_text(desc.dig?("title")) || extract_text(desc.dig?("infoRowRenderer", "title"))
-          if desc_title == "ARTIST"
-            artist = extract_text(desc.dig?("defaultMetadata")) || extract_text(desc.dig?("infoRowRenderer", "defaultMetadata"))
-          elsif desc_title == "SONG"
-            song = extract_text(desc.dig?("defaultMetadata")) || extract_text(desc.dig?("infoRowRenderer", "defaultMetadata"))
-          elsif desc_title == "ALBUM"
-            album = extract_text(desc.dig?("defaultMetadata")) || extract_text(desc.dig?("infoRowRenderer", "defaultMetadata"))
-          elsif desc_title == "LICENSES"
-            music_license = extract_text(desc.dig?("expandedMetadata")) || extract_text(desc.dig?("infoRowRenderer", "expandedMetadata"))
+      # Handle new videoAttributeViewModel structure (current YouTube format)
+      if video_attr = music_desc.dig?("videoAttributeViewModel")
+        # Extract data from the new structure
+        song = video_attr.dig?("title").try &.as_s
+        artist = video_attr.dig?("subtitle").try &.as_s
+        album = video_attr.dig?("secondarySubtitle", "content").try &.as_s
+        # License information may be in dialog data or other places - not easily accessible in this format
+        music_license = nil
+      else
+        # Try the original horizontal card generic structure
+        song_title = music_desc.dig?("title") || music_desc.dig?("header", "title")
+        if song_title
+          song = song_title["simpleText"]? || song_title.dig?("runs", 0, "text")
+        end
+        
+        # Try to find metadata in common locations for horizontal card structure
+        if metadata = music_desc.dig?("metadata") || music_desc.dig?("subtitle") || music_desc.dig?("infoRows")
+          metadata.try &.as_a.each do |desc|
+            desc_title = extract_text(desc.dig?("title")) || extract_text(desc.dig?("infoRowRenderer", "title"))
+            if desc_title == "ARTIST"
+              artist = extract_text(desc.dig?("defaultMetadata")) || extract_text(desc.dig?("infoRowRenderer", "defaultMetadata"))
+            elsif desc_title == "SONG"
+              song = extract_text(desc.dig?("defaultMetadata")) || extract_text(desc.dig?("infoRowRenderer", "defaultMetadata"))
+            elsif desc_title == "ALBUM"
+              album = extract_text(desc.dig?("defaultMetadata")) || extract_text(desc.dig?("infoRowRenderer", "defaultMetadata"))
+            elsif desc_title == "LICENSES"
+              music_license = extract_text(desc.dig?("expandedMetadata")) || extract_text(desc.dig?("infoRowRenderer", "expandedMetadata"))
+            end
           end
         end
       end
